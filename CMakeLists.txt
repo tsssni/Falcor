@@ -92,11 +92,13 @@ elseif(FALCOR_LINUX)
 endif()
 
 # Pull dependencies at configure time.
-message(STATUS "Updating packman dependencies ...")
-execute_process(
-    COMMAND ${PACKMAN} pull ${CMAKE_SOURCE_DIR}/dependencies.xml --platform ${PACKMAN_PLATFORM}
-    COMMAND_ERROR_IS_FATAL ANY
-)
+if(FALCOR_WINDOWS)
+    message(STATUS "Updating packman dependencies ...")
+    execute_process(
+        COMMAND ${PACKMAN} pull ${CMAKE_SOURCE_DIR}/dependencies.xml --platform ${PACKMAN_PLATFORM}
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+endif()
 
 # -----------------------------------------------------------------------------
 # Misc
@@ -115,7 +117,6 @@ git_version_setup()
 if(FALCOR_LINUX)
     set(CMAKE_INSTALL_RPATH $ORIGIN)
     set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
-    set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0)
 endif()
 
 
@@ -222,15 +223,17 @@ message(STATUS "FALCOR_ENABLE_USD: ${FALCOR_ENABLE_USD}")
 # Packman dependencies
 # -----------------------------------------------------------------------------
 
-add_custom_target(packman_dependencies DEPENDS packman_dependencies_stamp)
-set_target_properties(packman_dependencies PROPERTIES FOLDER "Misc")
-add_custom_command(
-    OUTPUT packman_dependencies_stamp
-    COMMAND ${PACKMAN} pull ${CMAKE_SOURCE_DIR}/dependencies.xml --platform ${PACKMAN_PLATFORM}
-    COMMAND ${CMAKE_COMMAND} -E touch packman_dependencies_stamp
-    MAIN_DEPENDENCY ${CMAKE_SOURCE_DIR}/dependencies.xml
-    COMMENT "Updating packman dependencies"
-)
+if(FALCOR_WINDOWS)
+    add_custom_target(packman_dependencies DEPENDS packman_dependencies_stamp)
+    set_target_properties(packman_dependencies PROPERTIES FOLDER "Misc")
+    add_custom_command(
+        OUTPUT packman_dependencies_stamp
+        COMMAND ${PACKMAN} pull ${CMAKE_SOURCE_DIR}/dependencies.xml --platform ${PACKMAN_PLATFORM}
+        COMMAND ${CMAKE_COMMAND} -E touch packman_dependencies_stamp
+        MAIN_DEPENDENCY ${CMAKE_SOURCE_DIR}/dependencies.xml
+        COMMENT "Updating packman dependencies"
+    )
+endif()
 
 # -----------------------------------------------------------------------------
 # Shader file handling
@@ -352,9 +355,28 @@ if(FALCOR_WINDOWS)
         COMMAND ${CMAKE_SOURCE_DIR}/build_scripts/deploycommon.bat ${source_dir} ${output_dir} $<CONFIG> ${FALCOR_SLANG_DIR} ${FALCOR_DLSS_DIR}
     )
 elseif(FALCOR_LINUX)
-    add_custom_target(deploy_dependencies ALL
-        COMMAND ${CMAKE_SOURCE_DIR}/build_scripts/deploycommon.sh ${source_dir} ${output_dir} $<CONFIG> ${FALCOR_SLANG_DIR} ${FALCOR_DLSS_DIR}
-    )
+    add_custom_target(deploy_dependencies ALL)
+    if(NANOVDB_INCLUDE_DIR)
+        add_custom_command(TARGET deploy_dependencies POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir}/shaders/nanovdb
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${NANOVDB_INCLUDE_DIR}/nanovdb/PNanoVDB.h
+                ${output_dir}/shaders/nanovdb/
+        )
+    endif()
+    if(RTXDI_INCLUDE_DIR)
+        add_custom_command(TARGET deploy_dependencies POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir}/shaders/rtxdi
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${RTXDI_INCLUDE_DIR}/rtxdi ${output_dir}/shaders/rtxdi
+        )
+    endif()
+    file(GLOB NVTT_RUNTIME_LIBS ${CMAKE_SOURCE_DIR}/external/nvtt/libnvtt.so*)
+    if(NVTT_RUNTIME_LIBS)
+        add_custom_command(TARGET deploy_dependencies POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy ${NVTT_RUNTIME_LIBS} ${output_dir}/
+        )
+    endif()
 endif()
 set_target_properties(deploy_dependencies PROPERTIES FOLDER "Misc")
 

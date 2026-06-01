@@ -797,16 +797,16 @@ target_source_group(Falcor "/")
 # ImGui source files
 # Note: These added after calling target_source_group macro as they are outside the current folder.
 target_sources(Falcor PRIVATE
-    ../../external/imgui/imconfig.h
-    ../../external/imgui/imgui.h
-    ../../external/imgui/imgui_internal.h
-    ../../external/imgui/imstb_rectpack.h
-    ../../external/imgui/imstb_textedit.h
-    ../../external/imgui/imstb_truetype.h
-    ../../external/imgui/imgui.cpp
-    ../../external/imgui/imgui_draw.cpp
-    ../../external/imgui/imgui_widgets.cpp
-    ../../external/imgui/imgui_tables.cpp
+    ../../external/slang/external/imgui/imconfig.h
+    ../../external/slang/external/imgui/imgui.h
+    ../../external/slang/external/imgui/imgui_internal.h
+    ../../external/slang/external/imgui/imstb_rectpack.h
+    ../../external/slang/external/imgui/imstb_textedit.h
+    ../../external/slang/external/imgui/imstb_truetype.h
+    ../../external/slang/external/imgui/imgui.cpp
+    ../../external/slang/external/imgui/imgui_draw.cpp
+    ../../external/slang/external/imgui/imgui_widgets.cpp
+    ../../external/slang/external/imgui/imgui_tables.cpp
     ../../external/imgui_addons/imguinodegrapheditor/imguinodegrapheditor.h
     ../../external/imgui_addons/imguinodegrapheditor/imguinodegrapheditor.cpp
 )
@@ -1009,7 +1009,9 @@ set_target_properties(Falcor PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${FALCOR_LIBRARY_OUTPUT_DIRECTORY}
 )
 
-add_dependencies(Falcor packman_dependencies)
+if(FALCOR_WINDOWS)
+    add_dependencies(Falcor packman_dependencies)
+endif()
 
 validate_headers(Falcor)
 

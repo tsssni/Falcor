@@ -168,14 +168,11 @@ void SampleApp::handleWindowSizeChange()
 {
     FALCOR_ASSERT(mpDevice && mpWindow && mpSwapchain);
 
-    // Tell the device to resize the swap chain
     auto newSize = mpWindow->getClientAreaSize();
-    uint32_t width = newSize.x;
-    uint32_t height = newSize.y;
+    mpSwapchain->resize(newSize.x, newSize.y);
 
-    mpSwapchain->resize(width, height);
-
-    resizeTargetFBO(width, height);
+    const auto& swapchainDesc = mpSwapchain->getDesc();
+    resizeTargetFBO(swapchainDesc.width, swapchainDesc.height);
 }
 
 void SampleApp::handleRenderFrame()
@@ -514,16 +511,22 @@ void SampleApp::renderFrame()
     if (mCaptureScreen)
         captureScreen(mpTargetFBO->getColorTexture(0).get());
 
-    // Copy framebuffer to swapchain image.
     if (mpSwapchain)
     {
         int imageIndex = mpSwapchain->acquireNextImage();
-        FALCOR_ASSERT(imageIndex >= 0 && imageIndex < (int)mpSwapchain->getDesc().imageCount);
-        const Texture* pSwapchainImage = mpSwapchain->getImage(imageIndex).get();
-        pRenderContext->copyResource(pSwapchainImage, mpTargetFBO->getColorTexture(0).get());
-        pRenderContext->resourceBarrier(pSwapchainImage, Resource::State::Present);
-        pRenderContext->submit();
-        mpSwapchain->present();
+        if (imageIndex < 0)
+        {
+            handleWindowSizeChange();
+            imageIndex = mpSwapchain->acquireNextImage();
+        }
+        if (imageIndex >= 0 && imageIndex < (int)mpSwapchain->getDesc().imageCount)
+        {
+            const Texture* pSwapchainImage = mpSwapchain->getImage(imageIndex).get();
+            pRenderContext->copyResource(pSwapchainImage, mpTargetFBO->getColorTexture(0).get());
+            pRenderContext->resourceBarrier(pSwapchainImage, Resource::State::Present);
+            pRenderContext->submit();
+            mpSwapchain->present();
+        }
     }
 
     mpDevice->endFrame();

@@ -56,8 +56,11 @@ struct ProgressBar::Window
     {
         // Create window
         GtkWidget* pWindow = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_window_set_title(GTK_WINDOW(pWindow), "Falcor Splash");
         gtk_window_set_position(GTK_WINDOW(pWindow), GTK_WIN_POS_CENTER_ALWAYS);
         gtk_window_set_decorated(GTK_WINDOW(pWindow), FALSE);
+        gtk_window_set_type_hint(GTK_WINDOW(pWindow), GDK_WINDOW_TYPE_HINT_SPLASHSCREEN);
+        gtk_window_set_keep_above(GTK_WINDOW(pWindow), TRUE);
 
         GtkWidget* pVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
         gtk_container_add(GTK_CONTAINER(pWindow), pVBox);
@@ -86,6 +89,13 @@ struct ProgressBar::Window
 
         g_source_remove(pulseTimerId);
         gtk_widget_destroy(pWindow);
+
+        // Pump remaining events and flush the display so the X (Xwayland) surface is
+        // torn down immediately, otherwise the splash lingers until the next GTK call.
+        while (gtk_events_pending())
+            gtk_main_iteration_do(FALSE);
+        if (GdkDisplay* pDisplay = gdk_display_get_default())
+            gdk_display_flush(pDisplay);
     }
 
     // At regular intervals, pulse the progress bar

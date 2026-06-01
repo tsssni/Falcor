@@ -51,7 +51,13 @@ public:
         Window* pWindow = (Window*)glfwGetWindowUserPointer(pGlfwWindow);
         if (pWindow != nullptr)
         {
-            pWindow->resize(width, height); // Window callback is handled in here
+            // Only record the latest size here. The actual (expensive) swapchain/FBO
+            // resize is coalesced and applied once per frame in msgLoop(). Resizing
+            // synchronously inside the callback both starves rendering (a drag delivers
+            // a burst of events in a single glfwPollEvents) and re-issues glfwSetWindowSize
+            // from within the size callback, which feeds back into a resize storm on X11.
+            pWindow->setWindowSize(width, height);
+            pWindow->mPendingSizeChange = true;
         }
     }
 
@@ -385,6 +391,9 @@ Window::Window(const Desc& desc, ICallbacks* pCallbacks)
     // Init GLFW when first window is created.
     if (sWindowCount.fetch_add(1) == 0)
     {
+#if FALCOR_LINUX
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
         if (glfwInit() == GLFW_FALSE)
             FALCOR_THROW("Failed to initialize GLFW.");
     }
@@ -519,6 +528,11 @@ void Window::msgLoop()
     while (!shouldClose())
     {
         pollForEvents();
+        if (mPendingSizeChange)
+        {
+            mPendingSizeChange = false;
+            mpCallbacks->handleWindowSizeChange();
+        }
         mpCallbacks->handleRenderFrame();
     }
 }

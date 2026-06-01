@@ -174,6 +174,7 @@ private:
     Desc mDesc;
     GLFWwindow* mpGLFWWindow;
     ApiHandle mApiHandle;
+    bool mPendingSizeChange = false;
     float2 mMouseScale;
     const float2& getMouseScale() const { return mMouseScale; }
     ICallbacks* mpCallbacks = nullptr;

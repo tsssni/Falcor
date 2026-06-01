@@ -83,6 +83,9 @@ void Swapchain::resize(uint32_t width, uint32_t height)
     mImages.clear();
     mpDevice->wait();
     FALCOR_GFX_CALL(mGfxSwapchain->resize(width, height));
+    const auto& gfxDesc = mGfxSwapchain->getDesc();
+    mDesc.width = gfxDesc.width;
+    mDesc.height = gfxDesc.height;
     prepareImages();
 }
 

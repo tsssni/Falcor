@@ -9,15 +9,21 @@
 /media_internal
 
 # Packman folders.
+/external/nvtt/
 /external/packman/
 /tools/.packman/
 
 # IDE folders.
 /.vs/
 /.vscode/
+/.envrc
+/.direnv
+/.cache
 
 # User files.
 /CMakeUserPresets.json
+/compile_commands.json
+/*.nu
 
 # File types.
 *.user

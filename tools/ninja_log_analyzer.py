@@ -20,7 +20,7 @@ def read_entries(path):
 
     # Check header.
     header = f.readline()
-    if header != "# ninja log v5\n":
+    if not header.startswith("# ninja log v"):
         logging.error(f"{path}:1 has invalid header!")
         return None
 

@@ -10,9 +10,11 @@
 [submodule "external/fmt"]
 	path = external/fmt
 	url = https://github.com/fmtlib/fmt.git
-[submodule "external/imgui"]
-	path = external/imgui
-	url = https://github.com/ocornut/imgui.git
-[submodule "external/vulkan-headers"]
-	path = external/vulkan-headers
-	url = https://github.com/KhronosGroup/Vulkan-Headers
+[submodule "external/RTXDI"]
+	path = external/RTXDI
+	url = https://github.com/tsssni/RTXDI
+	branch = falcor
+[submodule "external/slang"]
+	path = external/slang
+	url = git@github.com:tsssni/slang.git
+	branch = falcor

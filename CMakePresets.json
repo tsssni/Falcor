@@ -109,10 +109,7 @@
             "description": "Base Linux configuration.",
             "hidden": true,
             "inherits": "base",
-            "generator": "Ninja Multi-Config",
-            "cacheVariables": {
-                "CMAKE_MAKE_PROGRAM": "${sourceDir}/tools/.packman/ninja/ninja"
-            }
+            "generator": "Ninja Multi-Config"
         },
         {
             "name": "linux-clang-base",

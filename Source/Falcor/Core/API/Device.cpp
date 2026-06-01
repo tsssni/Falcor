@@ -980,6 +980,7 @@ void Device::wait()
 {
     mpRenderContext->submit(true);
     mpRenderContext->signal(mpFrameFence.get());
+    mpFrameFence->wait();
     executeDeferredReleases();
 }
 

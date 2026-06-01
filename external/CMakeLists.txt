@@ -31,22 +31,19 @@ set_target_properties(fmt PROPERTIES
 )
 
 # glfw
-message(STATUS "Configure glfw")
-set(GLFW_BUILD_EXAMPLES OFF)
-set(GLFW_BUILD_TESTS OFF)
-set(GLFW_BUILD_DOCS OFF)
-add_subdirectory(glfw)
-
-# imgui
-add_library(imgui INTERFACE)
-target_include_directories(imgui INTERFACE imgui)
+if(FALCOR_WINDOWS)
+    message(STATUS "Configure glfw")
+    set(GLFW_BUILD_EXAMPLES OFF)
+    set(GLFW_BUILD_TESTS OFF)
+    set(GLFW_BUILD_DOCS OFF)
+    add_subdirectory(glfw)
+else()
+    find_package(glfw3 CONFIG REQUIRED)
+endif()
 
 # pybind11
 message(STATUS "Configure pybind11")
 add_subdirectory(pybind11)
-
-# vulkan-headers
-add_subdirectory(vulkan-headers)
 
 
 # -----------------------------------------------------------------------------
@@ -109,18 +106,13 @@ if(FALCOR_WINDOWS)
         $<$<CONFIG:Debug>:OpenEXR-3_1_d.lib Imath-3_1_d.lib IlmThread-3_1_d.lib Iex-3_1_d.lib>
     )
 elseif(FALCOR_LINUX)
+    find_package(OpenEXR CONFIG REQUIRED)
     add_library(OpenEXR INTERFACE)
-    target_include_directories(OpenEXR INTERFACE
-        ${FALCOR_DEPS_DIR}/include/OpenEXR
-        ${FALCOR_DEPS_DIR}/include/Imath
-    )
-    target_link_directories(OpenEXR INTERFACE
-        $<$<CONFIG:Release>:${FALCOR_DEPS_DIR}/lib>
-        $<$<CONFIG:Debug>:${FALCOR_DEPS_DIR}/debug/lib>
-    )
     target_link_libraries(OpenEXR INTERFACE
-        $<$<CONFIG:Release>:OpenEXR-3_1.so Imath-3_1.so IlmThread-3_1.so Iex-3_1.so>
-        $<$<CONFIG:Debug>:OpenEXR-3_1_d.so Imath-3_1_d.so IlmThread-3_1_d.so Iex-3_1_d.so>
+        OpenEXR::OpenEXR
+        OpenEXR::Iex
+        OpenEXR::IlmThread
+        Imath::Imath
     )
 endif()
 
@@ -139,16 +131,9 @@ if(FALCOR_WINDOWS)
         $<$<CONFIG:Debug>:TBB_USE_DEBUG=1;__TBB_NO_IMPLICIT_LINKAGE=1>
     )
 elseif(FALCOR_LINUX)
-    add_library(tbb SHARED IMPORTED GLOBAL)
-    set_target_properties(tbb PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libtbb.so
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libtbb_debug.so
-    )
-    target_compile_definitions(tbb INTERFACE
-        $<$<CONFIG:Release>:TBB_USE_DEBUG=0>
-        $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
-    )
+    find_package(TBB CONFIG REQUIRED)
+    add_library(tbb INTERFACE)
+    target_link_libraries(tbb INTERFACE TBB::tbb)
 endif()
 
 # opensubdiv
@@ -161,12 +146,11 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/osdCPU.lib
     )
 elseif(FALCOR_LINUX)
-    add_library(opensubdiv STATIC IMPORTED GLOBAL)
-    set_target_properties(opensubdiv PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libosdCPU.a
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libosdCPU.a
-    )
+    find_path(OPENSUBDIV_INCLUDE_DIR opensubdiv/version.h REQUIRED)
+    find_library(OPENSUBDIV_LIBRARY NAMES osdCPU osdCPU_static REQUIRED)
+    add_library(opensubdiv INTERFACE)
+    target_include_directories(opensubdiv INTERFACE ${OPENSUBDIV_INCLUDE_DIR})
+    target_link_libraries(opensubdiv INTERFACE ${OPENSUBDIV_LIBRARY})
 endif()
 
 # OpenVDB
@@ -181,12 +165,15 @@ if(FALCOR_WINDOWS)
         INTERFACE_LINK_LIBRARIES "tbb;blosc"
     )
 elseif(FALCOR_LINUX)
-    add_library(OpenVDB SHARED IMPORTED GLOBAL)
-    set_target_properties(OpenVDB PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libopenvdb.so
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libopenvdb.so
-        INTERFACE_LINK_LIBRARIES "tbb;blosc"
+    find_path(OPENVDB_INCLUDE_DIR NAMES openvdb/openvdb.h REQUIRED)
+    find_library(OPENVDB_LIBRARY NAMES openvdb REQUIRED)
+    find_library(BLOSC_LIBRARY NAMES blosc REQUIRED)
+    add_library(OpenVDB INTERFACE)
+    target_include_directories(OpenVDB INTERFACE ${OPENVDB_INCLUDE_DIR})
+    target_link_libraries(OpenVDB INTERFACE
+        ${OPENVDB_LIBRARY}
+        ${BLOSC_LIBRARY}
+        tbb
     )
 endif()
 
@@ -200,12 +187,9 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION ${FALCOR_DEPS_DIR}/bin/assimp-vc143-mt.dll
     )
 elseif(FALCOR_LINUX)
-    add_library(assimp SHARED IMPORTED GLOBAL)
-    set_target_properties(assimp PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libassimp.so
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libassimpd.so
-    )
+    find_package(assimp CONFIG REQUIRED)
+    add_library(assimp INTERFACE)
+    target_link_libraries(assimp INTERFACE assimp::assimp)
 endif()
 
 # FreeImage
@@ -219,12 +203,11 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/bin/FreeImaged.dll
     )
 elseif(FALCOR_LINUX)
-    add_library(FreeImage SHARED IMPORTED GLOBAL)
-    set_target_properties(FreeImage PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libFreeImage.so
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libFreeImaged.so
-    )
+    find_path(FREEIMAGE_INCLUDE_DIR FreeImage.h REQUIRED)
+    find_library(FREEIMAGE_LIBRARY NAMES freeimage FreeImage REQUIRED)
+    add_library(FreeImage INTERFACE)
+    target_include_directories(FreeImage INTERFACE ${FREEIMAGE_INCLUDE_DIR})
+    target_link_libraries(FreeImage INTERFACE ${FREEIMAGE_LIBRARY})
 endif()
 
 # hdf5
@@ -239,13 +222,11 @@ if(FALCOR_WINDOWS)
         INTERFACE_COMPILE_DEFINITIONS H5_BUILT_AS_DYNAMIC_LIB
     )
 elseif(FALCOR_LINUX)
-    add_library(hdf5 SHARED IMPORTED GLOBAL)
-    set_target_properties(hdf5 PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libhdf5.so
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libhdf5_debug.so
-        INTERFACE_COMPILE_DEFINITIONS H5_BUILT_AS_DYNAMIC_LIB
-    )
+    find_package(HDF5 REQUIRED COMPONENTS C)
+    add_library(hdf5 INTERFACE)
+    target_include_directories(hdf5 INTERFACE ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(hdf5 INTERFACE ${HDF5_LIBRARIES})
+    target_compile_definitions(hdf5 INTERFACE H5_BUILT_AS_DYNAMIC_LIB)
 endif()
 
 # lz4
@@ -257,11 +238,20 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION ${FALCOR_DEPS_DIR}/lib/lz4.lib
     )
 elseif(FALCOR_LINUX)
-    add_library(lz4 STATIC IMPORTED GLOBAL)
-    set_target_properties(lz4 PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION ${FALCOR_DEPS_DIR}/lib/liblz4.a
-    )
+    find_package(lz4 CONFIG QUIET)
+    add_library(lz4 INTERFACE)
+    if(TARGET LZ4::lz4_shared)
+        target_link_libraries(lz4 INTERFACE LZ4::lz4_shared)
+    elseif(TARGET LZ4::lz4_static)
+        target_link_libraries(lz4 INTERFACE LZ4::lz4_static)
+    elseif(TARGET lz4::lz4)
+        target_link_libraries(lz4 INTERFACE lz4::lz4)
+    else()
+        find_path(LZ4_INCLUDE_DIR lz4.h REQUIRED)
+        find_library(LZ4_LIBRARY NAMES lz4 REQUIRED)
+        target_include_directories(lz4 INTERFACE ${LZ4_INCLUDE_DIR})
+        target_link_libraries(lz4 INTERFACE ${LZ4_LIBRARY})
+    endif()
 endif()
 
 # zlib
@@ -273,11 +263,9 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION ${FALCOR_DEPS_DIR}/lib/zlib.lib
     )
 elseif(FALCOR_LINUX)
-    add_library(zlib STATIC IMPORTED GLOBAL)
-    set_target_properties(zlib PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION ${FALCOR_DEPS_DIR}/lib/libz.a
-    )
+    find_package(ZLIB REQUIRED)
+    add_library(zlib INTERFACE)
+    target_link_libraries(zlib INTERFACE ZLIB::ZLIB)
 endif()
 
 # pugixml
@@ -289,12 +277,7 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/pugixml.lib
     )
 elseif(FALCOR_LINUX)
-    add_library(pugixml STATIC IMPORTED GLOBAL)
-    set_target_properties(pugixml PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${FALCOR_DEPS_DIR}/include
-        IMPORTED_LOCATION_RELEASE ${FALCOR_DEPS_DIR}/lib/libpugixml.a
-        IMPORTED_LOCATION_DEBUG ${FALCOR_DEPS_DIR}/debug/lib/libpugixml.a
-    )
+    find_package(pugixml CONFIG REQUIRED)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -312,11 +295,13 @@ if(EXISTS ${AFTERMATH_DIR}/include/GFSDK_Aftermath.h)
             IMPORTED_LOCATION ${AFTERMATH_DIR}/lib/x64/GFSDK_Aftermath_Lib.x64.dll
         )
     elseif(FALCOR_LINUX)
-        add_library(aftermath SHARED IMPORTED GLOBAL)
-        set_target_properties(aftermath PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES ${AFTERMATH_DIR}/include
-            IMPORTED_LOCATION ${AFTERMATH_DIR}/lib/x64/libGFSDK_Aftermath_Lib.x64.so
-    )
+        find_path(AFTERMATH_INCLUDE_DIR GFSDK_Aftermath.h)
+        find_library(AFTERMATH_LIBRARY NAMES GFSDK_Aftermath_Lib.x64 GFSDK_Aftermath)
+        add_library(aftermath INTERFACE)
+        if(AFTERMATH_INCLUDE_DIR AND AFTERMATH_LIBRARY)
+            target_include_directories(aftermath INTERFACE ${AFTERMATH_INCLUDE_DIR})
+            target_link_libraries(aftermath INTERFACE ${AFTERMATH_LIBRARY})
+        endif()
     endif()
     set(FALCOR_HAS_AFTERMATH ON PARENT_SCOPE)
 else()
@@ -338,49 +323,32 @@ endif()
 
 # slang
 
-set(FALCOR_LOCAL_SLANG OFF CACHE BOOL "Use a local build of slang instead of the binary package.")
-set(FALCOR_LOCAL_SLANG_DIR "${CMAKE_SOURCE_DIR}/../slang" CACHE PATH "Path to a local slang directory.")
-set(FALCOR_LOCAL_SLANG_BUILD_DIR "build/Debug" CACHE PATH "Path to the build directory of slang.")
+set(SLANG_ENABLE_GFX ON CACHE BOOL "" FORCE)
+set(SLANG_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(SLANG_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SLANG_ENABLE_SLANGD OFF CACHE BOOL "" FORCE)
+set(SLANG_ENABLE_SLANGC OFF CACHE BOOL "" FORCE)
+set(SLANG_ENABLE_SLANGRT OFF CACHE BOOL "" FORCE)
+set(SLANG_ENABLE_REPLAYER OFF CACHE BOOL "" FORCE)
+set(SLANG_SLANG_LLVM_FLAVOR DISABLE CACHE STRING "" FORCE)
+set(_falcor_saved_cxx_flags "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include cstdint")
+message(STATUS "Configure slang (from source)")
+add_subdirectory(slang)
+set(CMAKE_CXX_FLAGS "${_falcor_saved_cxx_flags}")
+foreach(_slang_lib slang gfx slang-glslang)
+    if(TARGET ${_slang_lib})
+        set_target_properties(${_slang_lib} PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        )
+    endif()
+endforeach()
 
-if(FALCOR_LOCAL_SLANG)
-    set(SLANG_DIR ${FALCOR_LOCAL_SLANG_DIR}/${FALCOR_LOCAL_SLANG_BUILD_DIR})
-    set(SLANG_INCLUDE_DIR ${FALCOR_LOCAL_SLANG_DIR}/include)
-else()
-    set(SLANG_DIR ${PACKMAN_DIR}/slang)
-    set(SLANG_INCLUDE_DIR ${PACKMAN_DIR}/slang/include)
-endif()
-set(FALCOR_SLANG_DIR ${SLANG_DIR} PARENT_SCOPE)
-
-if(FALCOR_WINDOWS)
-    add_library(slang SHARED IMPORTED GLOBAL)
-    set_target_properties(slang PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${SLANG_INCLUDE_DIR}
-        IMPORTED_IMPLIB ${SLANG_DIR}/lib/slang.lib
-        IMPORTED_LOCATION ${SLANG_DIR}/bin/slang.dll
-    )
-elseif(FALCOR_LINUX)
-    add_library(slang SHARED IMPORTED GLOBAL)
-    set_target_properties(slang PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${SLANG_INCLUDE_DIR}
-        IMPORTED_LOCATION ${SLANG_DIR}/lib/libslang.so
-    )
-endif()
-
-# slang-gfx
-if(FALCOR_WINDOWS)
-    add_library(slang-gfx SHARED IMPORTED GLOBAL)
-    set_target_properties(slang-gfx PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${SLANG_INCLUDE_DIR}
-        IMPORTED_IMPLIB ${SLANG_DIR}/lib/gfx.lib
-        IMPORTED_LOCATION ${SLANG_DIR}/bin/gfx.dll
-    )
-elseif(FALCOR_LINUX)
-    add_library(slang-gfx SHARED IMPORTED GLOBAL)
-    set_target_properties(slang-gfx PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${SLANG_INCLUDE_DIR}
-        IMPORTED_LOCATION ${SLANG_DIR}/lib/libgfx.so
-    )
-endif()
+add_library(slang-gfx INTERFACE)
+target_link_libraries(slang-gfx INTERFACE gfx)
+target_include_directories(slang INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/slang/include)
+set(FALCOR_SLANG_DIR ${CMAKE_CURRENT_BINARY_DIR}/slang PARENT_SCOPE)
 
 # pix
 set(PIX_DIR ${PACKMAN_DIR}/pix)
@@ -397,9 +365,15 @@ else()
 endif()
 
 # nanovdb
-set(NANOVDB_DIR ${PACKMAN_DIR}/nanovdb)
-add_library(nanovdb INTERFACE)
-target_include_directories(nanovdb INTERFACE ${NANOVDB_DIR}/include)
+if(FALCOR_WINDOWS)
+    set(NANOVDB_DIR ${PACKMAN_DIR}/nanovdb)
+    add_library(nanovdb INTERFACE)
+    target_include_directories(nanovdb INTERFACE ${NANOVDB_DIR}/include)
+else()
+    find_path(NANOVDB_INCLUDE_DIR nanovdb/NanoVDB.h REQUIRED)
+    add_library(nanovdb INTERFACE)
+    target_include_directories(nanovdb INTERFACE ${NANOVDB_INCLUDE_DIR})
+endif()
 
 # nv-usd
 set(NV_USD_RELEASE_DIR ${PACKMAN_DIR}/nv-usd-release)
@@ -424,13 +398,13 @@ if((EXISTS ${NV_USD_RELEASE_DIR}) AND (EXISTS ${NV_USD_DEBUG_DIR}))
             $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
         )
     elseif(FALCOR_LINUX)
-        add_library(nv-usd SHARED IMPORTED GLOBAL)
-        set_target_properties(nv-usd PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "${NV_USD_RELEASE_DIR}/include;${NV_USD_RELEASE_DIR}/include/boost"
-            IMPORTED_LOCATION_RELEASE ${NV_USD_RELEASE_DIR}/lib/libusd_ms.so
-            IMPORTED_LOCATION_DEBUG ${NV_USD_DEBUG_DIR}/lib/libusd_ms.so
-            INTERFACE_LINK_LIBRARIES "tbb"
-        )
+        find_package(pxr CONFIG QUIET)
+        add_library(nv-usd INTERFACE)
+        if(TARGET usd_ms)
+            target_link_libraries(nv-usd INTERFACE usd_ms tbb)
+        elseif(TARGET pxr::usd)
+            target_link_libraries(nv-usd INTERFACE pxr::usd tbb)
+        endif()
     endif()
     set(FALCOR_HAS_NV_USD ON PARENT_SCOPE)
 else()
@@ -499,8 +473,8 @@ else()
 endif()
 
 # nvtt
-set(NVTT_DIR ${PACKMAN_DIR}/nvtt)
 if(FALCOR_WINDOWS)
+    set(NVTT_DIR ${PACKMAN_DIR}/nvtt)
     add_library(nvtt SHARED IMPORTED GLOBAL)
     set_target_properties(nvtt PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES ${NVTT_DIR}/include
@@ -508,6 +482,7 @@ if(FALCOR_WINDOWS)
         IMPORTED_LOCATION ${NVTT_DIR}/nvtt30106.dll
     )
 elseif(FALCOR_LINUX)
+    set(NVTT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nvtt)
     add_library(nvtt SHARED IMPORTED GLOBAL)
     set_target_properties(nvtt PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES ${NVTT_DIR}/include
@@ -527,6 +502,7 @@ else()
 endif()
 
 # rtxdi
-set(RTXDI_DIR ${PACKMAN_DIR}/rtxdi)
+set(RTXDI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/RTXDI)
+set(RTXDI_INCLUDE_DIR ${RTXDI_DIR}/rtxdi-sdk/include CACHE PATH "RTXDI include directory" FORCE)
 add_library(rtxdi INTERFACE)
-target_include_directories(rtxdi INTERFACE ${RTXDI_DIR}/rtxdi-sdk/include)
+target_include_directories(rtxdi INTERFACE ${RTXDI_INCLUDE_DIR})
