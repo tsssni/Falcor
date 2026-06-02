@@ -32,11 +32,17 @@ import Rendering.RTXDI.RTXDI;
 import Utils.Sampling.TinyUniformSampleGenerator;
 
 RWTexture2D<float4> gColor;
+RWTexture2D<float4> gInputRadiance;
 RWTexture2D<float4> gEmission;
 RWTexture2D<float4> gDiffuseIllumination;
 RWTexture2D<float4> gDiffuseReflectance;
 RWTexture2D<float4> gSpecularIllumination;
 RWTexture2D<float4> gSpecularReflectance;
+RWTexture2D<float4> gReservoir;
+RWTexture2D<float4> gBRDF;
+
+Texture2D gBRDFLut;
+SamplerState gLutSampler;
 
 #define is_valid(name) (is_valid_##name != 0)
 
@@ -58,12 +64,22 @@ struct FinalShading
             return;
 
         float3 color = {};
+        float3 inputRadiance = {};
         float3 emission = {};
         float3 diffuseReflectance = {};
         float3 diffuseIllumination = {};
         float3 specularReflectance = {};
         float3 specularIllumination = {};
+        float4 reservoir = {};
+        float3 brdf = {};
         float hitT = 10000.f; // TODO: Remove magic number also used in SpatioTemporalResampling pass.
+
+#if RTXDI_INSTALLED
+        {
+            RTXDI_Reservoir r = RTXDI_LoadReservoir(gRTXDI.params, pixel, gRTXDI.finalShadingReservoir);
+            reservoir = float4(r.targetPdf, RTXDI_GetReservoirInvPdf(r), r.M, 1.0);
+        }
+#endif
 
         ShadingData sd;
         if (loadShadingData(pixel, frameDim, gScene.camera, vbuffer, sd))
@@ -105,6 +121,7 @@ struct FinalShading
                 sd.mtl.setActiveLobes((uint)LobeType::SpecularReflection);
                 specular = mi.eval(sd, dir, sg) * Li;
 
+                inputRadiance = Li;
                 hitT = distance;
             }
 
@@ -126,6 +143,14 @@ struct FinalShading
             specularReflectance = approxSpecularIntegralGGX(bsdfProperties.specularReflectance, ggxAlpha, NdotV);
             float3 specularFactor = select(specularReflectance <= 0.f, 0.f, 1.f / specularReflectance);
             specularIllumination = specular * specularFactor;
+
+            if (is_valid(gBRDF))
+            {
+                const float cosNV = saturate(dot(bsdfProperties.guideNormal, sd.V));
+                const float3 specularColor = bsdfProperties.specularReflectance;
+                const float2 fg = gBRDFLut.SampleLevel(gLutSampler, float2(cosNV, bsdfProperties.roughness), 0.f).xy;
+                brdf = bsdfProperties.diffuseReflectionAlbedo + specularColor * fg.x + saturate(50.f * specularColor.g) * fg.y;
+            }
         }
         else
         {
@@ -140,6 +165,8 @@ struct FinalShading
         // Write active outputs.
         if (is_valid(gColor))
             gColor[pixel] = float4(color, 1.f);
+        if (is_valid(gInputRadiance))
+            gInputRadiance[pixel] = float4(inputRadiance, 1.f);
         if (is_valid(gEmission))
             gEmission[pixel] = float4(emission, 1.f);
         if (is_valid(gDiffuseReflectance))
@@ -150,6 +177,10 @@ struct FinalShading
             gSpecularReflectance[pixel] = float4(specularReflectance, 1.f);
         if (is_valid(gSpecularIllumination))
             gSpecularIllumination[pixel] = float4(specularIllumination, hitT);
+        if (is_valid(gReservoir))
+            gReservoir[pixel] = reservoir;
+        if (is_valid(gBRDF))
+            gBRDF[pixel] = float4(brdf, 1.f);
     }
 };
 

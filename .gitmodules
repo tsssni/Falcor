@@ -12,3 +12,6 @@
 	path = external/slang
 	url = git@github.com:tsssni/slang.git
 	branch = falcor
+[submodule "external/optix"]
+	path = external/optix
+	url = https://github.com/NVIDIA/optix-dev.git

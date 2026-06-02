@@ -81,6 +81,9 @@ private:
     ref<ComputePass> mpPrepareSurfaceDataPass;
     ref<ComputePass> mpFinalShadingPass;
 
+    ref<Texture> mpBRDFLut;
+    ref<Sampler> mpLutSampler;
+
     uint2 mFrameDim = {0, 0};
     bool mOptionsChanged = false;
     bool mGBufferAdjustShadingNormals = false;

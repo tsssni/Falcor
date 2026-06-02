@@ -1,0 +1,2 @@
+[tool.ty.rules]
+unresolved-reference = "ignore"

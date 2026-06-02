@@ -4,6 +4,7 @@
   c-blosc,
   clangStdenv,
   cmake,
+  cudaPackages,
   fmt,
   glfw,
   gtk3,
@@ -11,10 +12,13 @@
   fetchFromGitHub,
   imath,
   lib,
+  libx11,
+  libxt,
   lz4,
   ninja,
   openimageio,
   opensubdiv,
+  openusd,
   openvdb,
   pkg-config,
   pugixml,
@@ -50,6 +54,7 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [
     cmake
+    cudaPackages.cudatoolkit
     ninja
     pkg-config
     python3
@@ -60,14 +65,18 @@ stdenv.mkDerivation {
     assimp
     boost
     c-blosc
+    cudaPackages.cudatoolkit
     fmt
     glfw
     gtk3
     hdf5
     imath
+    libx11
+    libxt
     lz4
     openimageio
     opensubdiv
+    openusd
     openvdb_9
     pugixml
     python3
@@ -79,7 +88,6 @@ stdenv.mkDerivation {
 
   cmakeFlags = [
     "-DFALCOR_USE_SYSTEM_PYTHON=ON"
-    "-DFALCOR_ENABLE_USD=OFF"
   ];
 
   meta = with lib; {

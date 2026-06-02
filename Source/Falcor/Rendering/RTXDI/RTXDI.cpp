@@ -162,7 +162,7 @@ namespace Falcor
     void RTXDI::bindShaderData(const ShaderVar& rootVar)
     {
 #if FALCOR_HAS_RTXDI
-        bindShaderDataInternal(rootVar, nullptr, false);
+        bindShaderDataInternal(rootVar, nullptr, nullptr, false);
 #endif
     }
 
@@ -246,7 +246,7 @@ namespace Falcor
 #endif
     }
 
-    void RTXDI::update(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors)
+    void RTXDI::update(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW)
     {
 #if FALCOR_HAS_RTXDI
         FALCOR_PROFILE(pRenderContext, "RTXDI::update");
@@ -278,23 +278,25 @@ namespace Falcor
         case Mode::TemporalResampling:
             generateCandidates(pRenderContext, kCandidateReservoirID);
             testCandidateVisibility(pRenderContext, kCandidateReservoirID);
-            outputReservoirID = temporalResampling(pRenderContext, pMotionVectors, kCandidateReservoirID, mLastFrameReservoirID);
+            outputReservoirID = temporalResampling(pRenderContext, pMotionVectors, pMotionVectorsW, kCandidateReservoirID, mLastFrameReservoirID);
             break;
         case Mode::SpatiotemporalResampling:
             generateCandidates(pRenderContext, kCandidateReservoirID);
             testCandidateVisibility(pRenderContext, kCandidateReservoirID);
-            outputReservoirID = spatiotemporalResampling(pRenderContext, pMotionVectors, kCandidateReservoirID, mLastFrameReservoirID);
+            outputReservoirID = spatiotemporalResampling(pRenderContext, pMotionVectors, pMotionVectorsW, kCandidateReservoirID, mLastFrameReservoirID);
             break;
         }
 
         // Remember output reservoir buffer for the next frame (and shading this frame).
-        mLastFrameReservoirID = outputReservoirID;
+        if (mOptions.mode != Mode::SpatiotemporalResampling)
+            mLastFrameReservoirID = outputReservoirID;
+        mShadingReservoirID = outputReservoirID;
 #endif
     }
 
 #if FALCOR_HAS_RTXDI
 
-    void RTXDI::bindShaderDataInternal(const ShaderVar& rootVar, const ref<Texture>& pMotionVectors, bool bindScene)
+    void RTXDI::bindShaderDataInternal(const ShaderVar& rootVar, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW, bool bindScene)
     {
         auto var = rootVar["gRTXDI"];
 
@@ -322,7 +324,7 @@ namespace Falcor
         var["biasCorrectionMode"] = uint(mOptions.biasCorrection);
 
         // Parameter for final shading
-        var["finalShadingReservoir"] = mLastFrameReservoirID;
+        var["finalShadingReservoir"] = mShadingReservoirID;
 
         // Parameters for generally spatial sample reuse
         var["spatialSampleCount"] = mOptions.spatialSampleCount;
@@ -348,6 +350,8 @@ namespace Falcor
         var["reservoirs"] = mpReservoirBuffer;
         var["neighborOffsets"] = mpNeighborOffsetsBuffer;
         var["motionVectors"] = pMotionVectors;
+        var["motionVectorsW"] = pMotionVectorsW;
+        var["hasMotionVectorsW"] = (pMotionVectorsW != nullptr);
 
         // PDF textures for importance sampling. Some shaders need UAVs, some SRVs
         var["localLightPdfTexture"] = mpLocalLightPdfTexture;
@@ -617,7 +621,7 @@ namespace Falcor
         return inputID;
     }
 
-    uint32_t RTXDI::temporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors,
+    uint32_t RTXDI::temporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW,
         uint32_t candidateReservoirID, uint32_t lastFrameReservoirID)
     {
         FALCOR_PROFILE(pRenderContext, "temporalResampling");
@@ -631,28 +635,42 @@ namespace Falcor
         var["CB"]["gTemporalReservoirID"] = lastFrameReservoirID;
         var["CB"]["gInputReservoirID"] = candidateReservoirID;
         var["CB"]["gOutputReservoirID"] = outputReservoirID;
-        bindShaderDataInternal(var, pMotionVectors);
+        bindShaderDataInternal(var, pMotionVectors, pMotionVectorsW);
         mpTemporalResamplingPass->execute(pRenderContext, mFrameDim.x, mFrameDim.y);
 
         return outputReservoirID;
     }
 
-    uint32_t RTXDI::spatiotemporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors,
+    uint32_t RTXDI::spatiotemporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW,
         uint32_t candidateReservoirID, uint32_t lastFrameReservoirID)
     {
         FALCOR_PROFILE(pRenderContext, "spatiotemporalResampling");
 
-        // This toggles between storing each frame's outputs between reservoirs 0 and 1.
-        uint32_t outputReservoirID = 1 - lastFrameReservoirID;
+        uint32_t outputReservoirID = temporalResampling(pRenderContext, pMotionVectors, pMotionVectorsW, candidateReservoirID, lastFrameReservoirID);
 
-        auto var = mpSpatiotemporalResamplingPass->getRootVar();
-        mpPixelDebug->prepareProgram(mpSpatiotemporalResamplingPass->getProgram(), var);
+        mLastFrameReservoirID = outputReservoirID;
 
-        var["CB"]["gTemporalReservoirID"] = lastFrameReservoirID;
-        var["CB"]["gInputReservoirID"] = candidateReservoirID;
-        var["CB"]["gOutputReservoirID"] = outputReservoirID;
-        bindShaderDataInternal(var, pMotionVectors);
-        mpSpatiotemporalResamplingPass->execute(pRenderContext, mFrameDim.x, mFrameDim.y);
+        if (mOptions.spatialIterations > 0)
+        {
+            uint32_t inputID = outputReservoirID;
+            uint32_t outputID = kCandidateReservoirID;
+
+            auto spatialVar = mpSpatialResamplingPass->getRootVar();
+            mpPixelDebug->prepareProgram(mpSpatialResamplingPass->getProgram(), spatialVar);
+
+            for (uint32_t i = 0; i < mOptions.spatialIterations; ++i)
+            {
+                spatialVar["CB"]["gInputReservoirID"] = inputID;
+                spatialVar["CB"]["gOutputReservoirID"] = outputID;
+                bindShaderDataInternal(spatialVar, nullptr);
+                mpSpatialResamplingPass->execute(pRenderContext, mFrameDim.x, mFrameDim.y);
+
+                inputID = outputID;
+                outputID = inputID == kCandidateReservoirID ? lastFrameReservoirID : kCandidateReservoirID;
+            }
+
+            outputReservoirID = inputID;
+        }
 
         return outputReservoirID;
     }
@@ -896,11 +914,8 @@ namespace Falcor
                 changed |= group.var("Sample count", options.spatialSampleCount, kMinSpatialSampleCount, kMaxSpatialSampleCount);
                 group.tooltip("Number of neighbor pixels considered for resampling.");
 
-                if (options.mode == Mode::SpatialResampling)
-                {
-                    changed |= group.var("Iterations", options.spatialIterations, kMinSpatialIterations, kMaxSpatialIterations);
-                    group.tooltip("Number of spatial resampling passes.");
-                }
+                changed |= group.var("Iterations", options.spatialIterations, kMinSpatialIterations, kMaxSpatialIterations);
+                group.tooltip("Number of spatial resampling passes.");
             }
         }
 

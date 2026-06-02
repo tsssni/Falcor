@@ -87,6 +87,7 @@ struct RTXDI
     float   boilingFilterStrength;                      ///< 0 = off, 1 = full strength.
     bool    enableVisibilityShortcut;                   ///< Should we use a visibility shortcut?  (Degrades quality somewhat)
     bool    enablePermutationSampling;                  ///< Enables permuting the pixels sampled from the previous frame (noisier but more denoiser friendly).
+    bool    hasMotionVectorsW;                          ///< True if a world-space motion vector texture is bound; enables 3D temporal reprojection (linear-depth delta). When false, depth is assumed constant (legacy 2D behavior).
 
     // Parameters only valid during shading (i.e., after calling RTXDI::update() in your C++ code).
     uint    finalShadingReservoir;                      ///< Reservoir where the final samples are stored (needed to extract them for the user).
@@ -99,6 +100,7 @@ struct RTXDI
     Buffer<float2> neighborOffsets;                                 ///< Buffer storing a poisson(-ish) distribution of offsets for sampling randomized neighbors.
     RWStructuredBuffer<RTXDI_PackedReservoir> reservoirs;           ///< Buffer storing reservoirs.
     Texture2D<float2> motionVectors;                                ///< Texture storing screen-space motion vectors.
+    Texture2D<float4> motionVectorsW;                               ///< Texture storing world-space motion vectors (prevPosW - posW), used to recover the linear-depth delta for temporal reprojection.
 
     Texture2D localLightPdfTexture;                     ///< PDF texture for sampling local lights (emissive triangles, local analytical lights).
     Texture2D envLightLuminanceTexture;                 ///< Luminance texture for evaluating the environment light.
@@ -362,6 +364,28 @@ extension RTXDI
         RTXDI_StoreReservoir(reservoir, gRTXDI.params, pixelID, outReservoirIndex);
     }
 
+    /** Compute the 3D screen-space motion passed to RTXDI's temporal reprojection.
+        The xy components are the screen-space motion vector.
+        The z component is the change in linear view depth.
+    */
+    float3 getScreenSpaceMotion(uint2 pixelPosition, RAB_Surface surface)
+    {
+        float2 motionXY = gRTXDI.motionVectors[pixelPosition] * gRTXDI.frameDim;
+
+        // Without a world-space motion vector we cannot recover the depth change, so fall back to
+        // the legacy behavior that assumes the linear depth is constant between frames.
+        if (!gRTXDI.hasMotionVectorsW)
+            return float3(motionXY, 0.f);
+
+        // Reconstruct the previous-frame world position of this surface point and measure its
+        // radial distance to the previous-frame camera, matching how surface viewDepth is defined.
+        float3 prevPosW = RAB_GetSurfaceWorldPos(surface) + gRTXDI.motionVectorsW[pixelPosition].xyz;
+        float prevLinearDepth = distance(gScene.camera.data.prevPosW, prevPosW);
+        float motionZ = prevLinearDepth - RAB_GetSurfaceLinearDepth(surface);
+
+        return float3(motionXY, motionZ);
+    }
+
     /** Perform temporal resampling.
     */
     void doTemporalResampling(uint2 pixelID, uint2 groupId, uint candidateReservoirIndex, uint priorFrameReservoirIndex, uint outReservoirIndex)
@@ -383,7 +407,7 @@ extension RTXDI
 
             // Setup resampling parameters.
             RTXDI_TemporalResamplingParameters tparams;
-            tparams.screenSpaceMotion = float3(gRTXDI.motionVectors[pixelPosition] * gRTXDI.frameDim, 0.f); // TODO handle linear z
+            tparams.screenSpaceMotion = gRTXDI.getScreenSpaceMotion(pixelPosition, surface);
             tparams.sourceBufferIndex = priorFrameReservoirIndex;
             tparams.maxHistoryLength = gRTXDI.maxHistoryLength;
             tparams.biasCorrectionMode = gRTXDI.biasCorrectionMode;
@@ -432,7 +456,7 @@ extension RTXDI
 
             // Setup resampling parameters.
             RTXDI_SpatioTemporalResamplingParameters stparams;
-            stparams.screenSpaceMotion = float3(gRTXDI.motionVectors[pixelPosition] * gRTXDI.frameDim, 0.f); // TODO handle linear z
+            stparams.screenSpaceMotion = gRTXDI.getScreenSpaceMotion(pixelPosition, surface);
             stparams.sourceBufferIndex = priorFrameReservoirIndex;
             stparams.maxHistoryLength = gRTXDI.maxHistoryLength;
             stparams.biasCorrectionMode = gRTXDI.biasCorrectionMode;

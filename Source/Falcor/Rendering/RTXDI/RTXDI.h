@@ -147,7 +147,7 @@ namespace Falcor
             // Spatial resampling options.
             float samplingRadius = 30.0f;               ///< Screen-space radius for spatial resampling, measured in pixels.
             uint32_t spatialSampleCount = 1;            ///< Number of neighbor pixels considered for resampling.
-            uint32_t spatialIterations = 5;             ///< Number of spatial resampling passes (only used in SpatialResampling mode, Spatiotemporal mode always uses 1 iteration).
+            uint32_t spatialIterations = 5;             ///< Number of spatial resampling passes.
 
             // Temporal resampling options.
             uint32_t maxHistoryLength = 20;             ///< Maximum history length for temporal reuse, measured in frames.
@@ -263,9 +263,10 @@ namespace Falcor
         /** Update and run this frame's RTXDI resampling, allowing final samples to be queried afterwards.
             Must be called once between beginFrame() and endFrame().
             \param[in] pRenderContext Render context.
-            \param[in] pMotionVectors Motion vectors for temporal reprojection.
+            \param[in] pMotionVectors Screen-space motion vectors for temporal reprojection.
+            \param[in] pMotionVectorsW World-space motion vectors (prevPosW - posW), used to recover the linear-depth delta for the depth-based disocclusion test. May be null to fall back to constant-depth (2D) reprojection.
         */
-        void update(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors);
+        void update(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW = nullptr);
 
         /** Get the pixel debug component.
             \return Returns the pixel debug component.
@@ -298,6 +299,7 @@ namespace Falcor
         uint        mFrameIndex = 0;                                ///< Current frame index.
         uint2       mFrameDim = { 0, 0 };                           ///< Current frame dimension in pixels.
         uint32_t    mLastFrameReservoirID = 1;                      ///< Index of the reservoir containing last frame's output (for temporal reuse).
+        uint32_t    mShadingReservoirID = 1;                        ///< Index of the reservoir used for final shading of the current frame.
         uint32_t    mCurrentSurfaceBufferIndex = 0;                 ///< Index of the surface buffer used for the current frame (0 or 1).
 
         CameraData  mPrevCameraData;                                ///< Previous frame's camera data.
@@ -379,15 +381,15 @@ namespace Falcor
 
         // Compute pass launches.
 
-        void bindShaderDataInternal(const ShaderVar& rootVar, const ref<Texture>& pMotionVectors, bool bindScene = true);
+        void bindShaderDataInternal(const ShaderVar& rootVar, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW = nullptr, bool bindScene = true);
         void updateLights(RenderContext* pRenderContext);
         void updateEnvLight(RenderContext* pRenderContext);
         void presampleLights(RenderContext* pRenderContext);
         void generateCandidates(RenderContext* pRenderContext, uint32_t outputReservoirID);
         void testCandidateVisibility(RenderContext* pRenderContext, uint32_t candidateReservoirID);
         uint32_t spatialResampling(RenderContext* pRenderContext, uint32_t inputReservoirID);
-        uint32_t temporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, uint32_t candidateReservoirID, uint32_t lastFrameReservoirID);
-        uint32_t spatiotemporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, uint32_t candidateReservoirID, uint32_t lastFrameReservoirID);
+        uint32_t temporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW, uint32_t candidateReservoirID, uint32_t lastFrameReservoirID);
+        uint32_t spatiotemporalResampling(RenderContext* pRenderContext, const ref<Texture>& pMotionVectors, const ref<Texture>& pMotionVectorsW, uint32_t candidateReservoirID, uint32_t lastFrameReservoirID);
 
         // Internal routines.
 

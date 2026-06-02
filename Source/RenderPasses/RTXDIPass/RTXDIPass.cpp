@@ -26,6 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "RTXDIPass.h"
+#include "Core/Platform/OS.h"
 #include "RenderGraph/RenderPassHelpers.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
 
@@ -39,28 +40,36 @@ const std::string kFinalShadingFile = "RenderPasses/RTXDIPass/FinalShading.cs.sl
 const std::string kInputVBuffer = "vbuffer";
 const std::string kInputTexGrads = "texGrads";
 const std::string kInputMotionVectors = "mvec";
+const std::string kInputMotionVectorsW = "mvecW";
 
 const Falcor::ChannelList kInputChannels = {
     // clang-format off
     { kInputVBuffer,            "gVBuffer",                 "Visibility buffer in packed format"                       },
     { kInputTexGrads,           "gTextureGrads",            "Texture gradients", true /* optional */                   },
     { kInputMotionVectors,      "gMotionVector",            "Motion vector buffer (float format)", true /* optional */ },
+    { kInputMotionVectorsW,     "gMotionVectorW",           "World-space motion vector buffer (used for 3D temporal reprojection)", true /* optional */ },
     // clang-format on
 };
 
 const Falcor::ChannelList kOutputChannels = {
     // clang-format off
     { "color",                  "gColor",                   "Final color",              true /* optional */, ResourceFormat::RGBA32Float },
+    { "inputRadiance",          "gInputRadiance",           "Incident radiance",        true /* optional */, ResourceFormat::RGBA32Float },
     { "emission",               "gEmission",                "Emissive color",           true /* optional */, ResourceFormat::RGBA32Float },
     { "diffuseIllumination",    "gDiffuseIllumination",     "Diffuse illumination",     true /* optional */, ResourceFormat::RGBA32Float },
     { "diffuseReflectance",     "gDiffuseReflectance",      "Diffuse reflectance",      true /* optional */, ResourceFormat::RGBA32Float },
     { "specularIllumination",   "gSpecularIllumination",    "Specular illumination",    true /* optional */, ResourceFormat::RGBA32Float },
     { "specularReflectance",    "gSpecularReflectance",     "Specular reflectance",     true /* optional */, ResourceFormat::RGBA32Float },
+    { "reservoir",              "gReservoir",               "Final reservoir (targetPdf, wSum, M, valid)", true /* optional */, ResourceFormat::RGBA32Float },
+    { "brdf",                   "gBRDF",                    "Split-sum IBL BRDF",       true /* optional */, ResourceFormat::RGBA32Float },
     // clang-format on
 };
 
 // Scripting options.
 const char* kOptions = "options";
+
+// Split-sum BRDF LUT baked by the reference screen-space IBL renderer, bundled under data/.
+const std::string kBRDFLutPath = "data/RTXDIPass/brdf_lut.png";
 } // namespace
 
 // What passes does this DLL expose?  Register them here
@@ -72,6 +81,14 @@ extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registr
 RTXDIPass::RTXDIPass(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
 {
     parseProperties(props);
+
+    Sampler::Desc samplerDesc;
+    samplerDesc.setFilterMode(TextureFilteringMode::Linear, TextureFilteringMode::Linear, TextureFilteringMode::Point)
+        .setAddressingMode(TextureAddressingMode::Clamp, TextureAddressingMode::Clamp, TextureAddressingMode::Clamp);
+    mpLutSampler = mpDevice->createSampler(samplerDesc);
+    mpBRDFLut = Texture::createFromFile(mpDevice, getRuntimeDirectory() / kBRDFLutPath, false /* no MIPs */, false /* linear color */);
+    if (!mpBRDFLut)
+        logWarning("RTXDIPass: failed to load BRDF LUT from '{}'.", kBRDFLutPath);
 }
 
 void RTXDIPass::parseProperties(const Properties& props)
@@ -115,6 +132,7 @@ void RTXDIPass::execute(RenderContext* pRenderContext, const RenderData& renderD
 
     const auto& pVBuffer = renderData.getTexture(kInputVBuffer);
     const auto& pMotionVectors = renderData.getTexture(kInputMotionVectors);
+    const auto& pMotionVectorsW = renderData.getTexture(kInputMotionVectorsW);
 
     auto& dict = renderData.getDictionary();
 
@@ -134,7 +152,7 @@ void RTXDIPass::execute(RenderContext* pRenderContext, const RenderData& renderD
 
     prepareSurfaceData(pRenderContext, pVBuffer);
 
-    mpRTXDI->update(pRenderContext, pMotionVectors);
+    mpRTXDI->update(pRenderContext, pMotionVectors, pMotionVectorsW);
 
     finalShading(pRenderContext, pVBuffer, renderData);
 
@@ -264,6 +282,9 @@ void RTXDIPass::finalShading(RenderContext* pRenderContext, const ref<Texture>& 
     auto var = rootVar["gFinalShading"];
     var["vbuffer"] = pVBuffer;
     var["frameDim"] = mFrameDim;
+
+    rootVar["gBRDFLut"] = mpBRDFLut;
+    rootVar["gLutSampler"] = mpLutSampler;
 
     // Bind output channels as UAV buffers.
     auto bind = [&](const ChannelDesc& channel)

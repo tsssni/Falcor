@@ -72,11 +72,14 @@
               shader-slang
               ty
               vulkan-validation-layers
+              (python3.withPackages (ps: with ps; [ tqdm ]))
             ];
             shellHook = ''
               for nvtt_so in external/nvtt/libnvtt.so.*; do
                 [ -e "$nvtt_so" ] || continue
-                ${pkgs.patchelf}/bin/patchelf --set-rpath ${lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]} "$nvtt_so" 2>/dev/null || true
+                ${pkgs.patchelf}/bin/patchelf --set-rpath ${
+                  lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+                } "$nvtt_so" 2>/dev/null || true
                 ln -sf "$(basename "$nvtt_so")" external/nvtt/libnvtt.so 2>/dev/null || true
               done
               export CMAKE_INSTALL_PREFIX=$HOME/metatron/out

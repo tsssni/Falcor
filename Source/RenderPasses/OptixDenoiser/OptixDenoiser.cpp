@@ -255,7 +255,7 @@ void OptixDenoiser_::allocateStagingBuffer(RenderContext* pRenderContext, Intero
     interop.buffer = mpDevice->createTypedBuffer(
         falcorFormat,
         mBufferSize.x * mBufferSize.y,
-        ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess | ResourceBindFlags::RenderTarget | ResourceBindFlags::Shared
+        ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess | ResourceBindFlags::Shared
     );
     interop.devicePtr = (CUdeviceptr)exportBufferToCudaDevice(interop.buffer);
 
