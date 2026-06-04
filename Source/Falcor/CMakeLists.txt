@@ -984,7 +984,7 @@ target_link_libraries(Falcor
         $<$<BOOL:${FALCOR_HAS_CUDA}>:CUDA::cudart_static>
     PRIVATE
         git_version
-        FreeImage assimp OpenEXR OpenVDB lz4 zlib pugixml opensubdiv
+        oiio assimp OpenVDB lz4 zlib pugixml opensubdiv
         glfw mikktspace nvtt
         $<$<BOOL:${FALCOR_HAS_D3D12}>:d3d12>
         $<$<BOOL:${FALCOR_HAS_D3D12_AGILITY_SDK}>:agility-sdk>

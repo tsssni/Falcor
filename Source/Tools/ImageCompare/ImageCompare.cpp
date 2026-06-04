@@ -25,9 +25,10 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-#include <FreeImage.h>
+#include <OpenImageIO/imageio.h>
 #include <args.hxx>
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -72,114 +73,57 @@ public:
 
     static std::shared_ptr<Image> loadFromFile(const std::filesystem::path& path)
     {
-        FREE_IMAGE_FORMAT fifFormat = FIF_UNKNOWN;
-
-        auto pathStr = path.string();
-
-        // Determine file format.
-        fifFormat = FreeImage_GetFileType(pathStr.c_str(), 0);
-        if (fifFormat == FIF_UNKNOWN)
-            fifFormat = FreeImage_GetFIFFromFilename(pathStr.c_str());
-        if (fifFormat == FIF_UNKNOWN)
-            throw std::runtime_error("Unknown image format");
-        if (!FreeImage_FIFSupportsReading(fifFormat))
-            throw std::runtime_error("Unsupported image format");
-
-        // Read image.
-        FIBITMAP* srcBitmap = FreeImage_Load(fifFormat, pathStr.c_str());
-        if (!srcBitmap)
+        auto input = OIIO::ImageInput::open(path.string());
+        if (!input)
             throw std::runtime_error("Cannot read image");
 
-        // Convert to RGBA32F.
-        FIBITMAP* floatBitmap = FreeImage_ConvertToRGBAF(srcBitmap);
-        FreeImage_Unload(srcBitmap);
-        if (!floatBitmap)
-            throw std::runtime_error("Cannot convert to RGBA float format");
+        const OIIO::ImageSpec& spec = input->spec();
+        const uint32_t width = uint32_t(spec.width);
+        const uint32_t height = uint32_t(spec.height);
+        const int channels = spec.nchannels;
 
-        // Create image.
-        auto image = create(FreeImage_GetWidth(floatBitmap), FreeImage_GetHeight(floatBitmap));
-        int bytesPerPixel = 4 * sizeof(float);
-        FreeImage_ConvertToRawBits(
-            reinterpret_cast<BYTE*>(image->getData()),
-            floatBitmap,
-            bytesPerPixel * image->getWidth(),
-            bytesPerPixel * 8,
-            FI_RGBA_RED_MASK,
-            FI_RGBA_GREEN_MASK,
-            FI_RGBA_BLUE_MASK,
-            true
-        );
-        FreeImage_Unload(floatBitmap);
+        // Read the source channels as float (top-down).
+        std::vector<float> src(size_t(width) * height * channels);
+        if (!input->read_image(0, 0, 0, channels, OIIO::TypeDesc::FLOAT, src.data()))
+            throw std::runtime_error("Cannot read image");
+        input->close();
+
+        // Expand to RGBA, defaulting missing color channels to 0 and alpha to 1.
+        auto image = create(width, height);
+        float* dst = image->getData();
+        for (size_t i = 0; i < size_t(width) * height; ++i)
+        {
+            for (int c = 0; c < 4; ++c)
+                dst[i * 4 + c] = (c < channels) ? src[i * channels + c] : (c == 3 ? 1.f : 0.f);
+        }
 
         return image;
     }
 
     void saveToFile(const std::filesystem::path& path, bool writeAlpha = true) const
     {
-        FREE_IMAGE_FORMAT fifFormat = FIF_UNKNOWN;
+        auto output = OIIO::ImageOutput::create(path.string());
+        if (!output)
+            throw std::runtime_error("Unknown or unsupported image format");
 
-        auto pathStr = path.string();
-
-        // Determine file format.
-        fifFormat = FreeImage_GetFIFFromFilename(pathStr.c_str());
-        if (fifFormat == FIF_UNKNOWN)
-            throw std::runtime_error("Unknown image format");
-        if (!FreeImage_FIFSupportsWriting(fifFormat))
-            throw std::runtime_error("Unsupported image format");
-
-        bool writeFloat = fifFormat == FIF_EXR || fifFormat == FIF_PFM || fifFormat == FIF_HDR;
-        if (fifFormat != FIF_EXR && fifFormat != FIF_PNG)
+        std::string ext = path.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        const bool writeFloat = (ext == ".exr" || ext == ".pfm" || ext == ".hdr");
+        if (ext != ".exr" && ext != ".png")
             writeAlpha = false;
 
-        // Create bitmap.
-        FIBITMAP* bitmap;
-        const float* src = getData();
-        if (writeFloat)
-        {
-            bitmap = FreeImage_AllocateT(writeAlpha ? FIT_RGBAF : FIT_RGBF, mWidth, mHeight);
-            for (uint32_t y = 0; y < mHeight; y++)
-            {
-                float* dst = reinterpret_cast<float*>(FreeImage_GetScanLine(bitmap, mHeight - y - 1));
-                if (writeAlpha)
-                {
-                    std::memcpy(dst, src, mWidth * 4 * sizeof(float));
-                    src += mWidth * 4;
-                }
-                else
-                {
-                    for (uint32_t x = 0; x < mWidth; ++x)
-                    {
-                        dst[0] = src[0];
-                        dst[1] = src[1];
-                        dst[2] = src[2];
-                        dst += 3;
-                        src += 4;
-                    }
-                }
-            }
-        }
-        else
-        {
-            bitmap = FreeImage_Allocate(mWidth, mHeight, writeAlpha ? 32 : 24);
-            for (uint32_t y = 0; y < mHeight; y++)
-            {
-                uint8_t* dst = reinterpret_cast<uint8_t*>(FreeImage_GetScanLine(bitmap, mHeight - y - 1));
-                for (uint32_t x = 0; x < mWidth; ++x)
-                {
-                    dst[2] = clamp(int(src[0] * 255.f), 0, 255);
-                    dst[1] = clamp(int(src[1] * 255.f), 0, 255);
-                    dst[0] = clamp(int(src[2] * 255.f), 0, 255);
-                    if (writeAlpha)
-                        dst[3] = clamp(int(src[3] * 255.f), 0, 255);
-                    dst += writeAlpha ? 4 : 3;
-                    src += 4;
-                }
-            }
-        }
+        const int channels = writeAlpha ? 4 : 3;
+        const OIIO::TypeDesc fileType = writeFloat ? OIIO::TypeDesc::FLOAT : OIIO::TypeDesc::UINT8;
+        OIIO::ImageSpec spec(int(mWidth), int(mHeight), channels, fileType);
 
-        // Write image.
-        FreeImage_Save(fifFormat, bitmap, pathStr.c_str());
-        FreeImage_Unload(bitmap);
+        // Source is tightly packed RGBA float, top-down. Writing 3 channels reads RGB from each
+        // RGBA pixel via the pixel stride; float->uint8 conversion (with clamping) is done by OIIO.
+        if (!output->open(path.string(), spec))
+            throw std::runtime_error("Cannot open image for writing");
+        const OIIO::stride_t xstride = OIIO::stride_t(4) * OIIO::stride_t(sizeof(float));
+        if (!output->write_image(OIIO::TypeDesc::FLOAT, getData(), xstride))
+            throw std::runtime_error("Cannot write image");
+        output->close();
     }
 
 private:

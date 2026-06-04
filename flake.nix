@@ -36,12 +36,7 @@
         import nixpkgs {
           inherit system;
           overlays = tsssni.pkgs;
-          config = {
-            allowUnfree = true;
-            permittedInsecurePackages = [
-              "freeimage-3.19.11"
-            ];
-          };
+          config.allowUnfree = true;
         };
 
       packages = mapSystems (
@@ -75,7 +70,6 @@
               clang-tools
               cmake-language-server
               shader-slang
-              ruff
               ty
               vulkan-validation-layers
             ];

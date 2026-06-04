@@ -80,9 +80,19 @@ template<>
 struct fmt::formatter<Falcor::PropertiesTest::TestStruct> : formatter<std::string>
 {
     template<typename FormatContext>
-    auto format(const Falcor::PropertiesTest::TestStruct& t, FormatContext& ctx)
+    auto format(const Falcor::PropertiesTest::TestStruct& t, FormatContext& ctx) const
     {
         return format_to(ctx.out(), "TestStruct{{a={}, b={}, c={}}}", t.a, t.b, t.c);
+    }
+};
+
+template<>
+struct fmt::formatter<nlohmann::ordered_json> : formatter<std::string>
+{
+    template<typename FormatContext>
+    auto format(const nlohmann::ordered_json& j, FormatContext& ctx) const
+    {
+        return formatter<std::string>::format(j.dump(), ctx);
     }
 };
 

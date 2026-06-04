@@ -23,7 +23,6 @@
 # User files.
 /CMakeUserPresets.json
 /compile_commands.json
-/*.nu
 
 # File types.
 *.user

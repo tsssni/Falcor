@@ -4,7 +4,7 @@
   c-blosc,
   clangStdenv,
   cmake,
-  freeimage,
+  fmt,
   glfw,
   gtk3,
   hdf5,
@@ -13,9 +13,9 @@
   lib,
   lz4,
   ninja,
-  openexr,
-  openvdb,
+  openimageio,
   opensubdiv,
+  openvdb,
   pkg-config,
   pugixml,
   python3,
@@ -60,15 +60,15 @@ stdenv.mkDerivation {
     assimp
     boost
     c-blosc
-    freeimage
+    fmt
     glfw
     gtk3
     hdf5
     imath
     lz4
-    openexr
-    openvdb_9
+    openimageio
     opensubdiv
+    openvdb_9
     pugixml
     python3
     tbb

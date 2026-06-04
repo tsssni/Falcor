@@ -147,7 +147,7 @@ void registerGPUTest(std::filesystem::path path, std::string name, unittest::Opt
 template<typename... Args>
 void reportLine(const std::string_view format, Args&&... args)
 {
-    std::string report = fmt::vformat(format, fmt::make_format_args(std::forward<Args>(args)...));
+    std::string report = fmt::vformat(format, fmt::make_format_args(args...));
     bool willLogPrint = is_set(Logger::getOutputs(), Logger::OutputFlags::Console) ||
                         (is_set(Logger::getOutputs(), Logger::OutputFlags::DebugWindow) && isDebuggerPresent());
 

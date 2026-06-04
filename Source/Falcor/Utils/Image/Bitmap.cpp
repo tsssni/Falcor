@@ -26,80 +26,17 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "Bitmap.h"
-#include "Core/Macros.h"
 #include "Core/API/Texture.h"
-#include "Core/Platform/MemoryMappedFile.h"
-#include "Utils/Math/ScalarMath.h"
-#include "Utils/Math/Float16.h"
 #include "Utils/Logger.h"
 #include "Utils/StringUtils.h"
 
-#include <ImfIO.h>
-#include <ImfInputFile.h>
-#include <ImfChannelList.h>
-#include <ImfHeader.h>
+#include <OpenImageIO/imageio.h>
 
-#if FALCOR_WINDOWS
-#ifndef WINDOWS_LEAN_AND_MEAN
-#define WINDOWS_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
-#include <FreeImage.h>
+#include <algorithm>
+#include <vector>
 
 namespace Falcor
 {
-namespace
-{
-
-/// Wraps MemoryMappedFile in an OpenEXR interface
-class OpenExrStream : public Imf::IStream
-{
-public:
-    OpenExrStream(const MemoryMappedFile& file) : Imf::IStream(""), mFile(file)
-    {
-        mFileData = reinterpret_cast<const uint8_t*>(mFile.getData());
-    }
-
-    virtual bool read(char c[/*n*/], int n)
-    {
-        if (mOffset + size_t(n) > mFile.getSize())
-            return false;
-        memcpy(c, mFileData + mOffset, n);
-        mOffset += n;
-        return true;
-    }
-
-    virtual uint64_t tellg() { return mOffset; }
-
-    virtual void seekg(uint64_t pos) { mOffset = pos; }
-
-    virtual void clear() {}
-
-private:
-    const MemoryMappedFile& mFile;
-    const uint8_t* mFileData;
-    size_t mOffset = 0;
-};
-
-bool isFloat16Exr(const MemoryMappedFile& inputFile)
-{
-    OpenExrStream stream(inputFile);
-    Imf::InputFile imfFile(stream);
-    const Imf::ChannelList& channels = imfFile.header().channels();
-    for (auto it = channels.begin(); it != channels.end(); ++it)
-        if (it.channel().type != Imf::HALF)
-            return false;
-    return true;
-}
-
-} // namespace
-
-static bool isRGB32fSupported()
-{
-    return false; // FIX THIS
-}
-
 static void genWarning(const std::string& errMsg, const std::filesystem::path& path)
 {
     logWarning("Error when loading image file from '{}': {}", path, errMsg);
@@ -205,84 +142,6 @@ static std::vector<float> convertToRGBA32Float(ResourceFormat format, uint32_t w
     return floatData;
 }
 
-/**
- * Converts 96bpp to 128bpp RGBA without clamping.
- * Note that we can't use FreeImage_ConvertToRGBAF() as it clamps to [0,1].
- */
-static FIBITMAP* convertToRGBAF(FIBITMAP* pDib)
-{
-    const unsigned width = FreeImage_GetWidth(pDib);
-    const unsigned height = FreeImage_GetHeight(pDib);
-
-    auto pNew = FreeImage_AllocateT(FIT_RGBAF, width, height);
-    FreeImage_CloneMetadata(pNew, pDib);
-
-    const unsigned src_pitch = FreeImage_GetPitch(pDib);
-    const unsigned dst_pitch = FreeImage_GetPitch(pNew);
-
-    const BYTE* src_bits = (BYTE*)FreeImage_GetBits(pDib);
-    BYTE* dst_bits = (BYTE*)FreeImage_GetBits(pNew);
-
-    for (unsigned y = 0; y < height; y++)
-    {
-        const FIRGBF* src_pixel = (FIRGBF*)src_bits;
-        FIRGBAF* dst_pixel = (FIRGBAF*)dst_bits;
-
-        for (unsigned x = 0; x < width; x++)
-        {
-            // Convert pixels directly, while adding a "dummy" alpha of 1.0
-            dst_pixel[x].red = src_pixel[x].red;
-            dst_pixel[x].green = src_pixel[x].green;
-            dst_pixel[x].blue = src_pixel[x].blue;
-            dst_pixel[x].alpha = 1.0F;
-        }
-        src_bits += src_pitch;
-        dst_bits += dst_pitch;
-    }
-    return pNew;
-}
-
-/**
- * Converts 96/128bpp to 64bpp RGBA floating-point image.
- * Note that FreeImage doesn't support 16-bit float formats.
- */
-static FIBITMAP* convertToRGBA16Float(FIBITMAP* pDib)
-{
-    const auto type = FreeImage_GetImageType(pDib);
-    const uint32_t bpp = FreeImage_GetBPP(pDib);
-    FALCOR_CHECK(type == FIT_RGBF || type == FIT_RGBAF, "Image type must be RGB/RGBA with 32-bit float per channel.");
-    FALCOR_CHECK(bpp == 96 || bpp == 128, "Image must be 96 or 128bpp.");
-
-    const uint32_t width = FreeImage_GetWidth(pDib);
-    const uint32_t height = FreeImage_GetHeight(pDib);
-
-    auto pNew = FreeImage_AllocateT(FIT_RGBA16, width, height);
-    FreeImage_CloneMetadata(pNew, pDib);
-
-    const uint32_t src_pitch = FreeImage_GetPitch(pDib);
-    const uint32_t dst_pitch = FreeImage_GetPitch(pNew);
-
-    const BYTE* src_bits = (BYTE*)FreeImage_GetBits(pDib);
-    BYTE* dst_bits = (BYTE*)FreeImage_GetBits(pNew);
-
-    for (uint32_t y = 0; y < height; y++)
-    {
-        const FIRGBAF* src_pixel = (FIRGBAF*)src_bits;
-        FIRGBA16* dst_pixel = (tagFIRGBA16*)dst_bits;
-
-        for (uint32_t x = 0; x < width; x++)
-        {
-            // Convert pixels to float16_t directly, while adding a "dummy" alpha of 1.0 if source format doesn't have alpha.
-            dst_pixel[x].red = float16_t(src_pixel[x].red).toBits();
-            dst_pixel[x].green = float16_t(src_pixel[x].green).toBits();
-            dst_pixel[x].blue = float16_t(src_pixel[x].blue).toBits();
-            dst_pixel[x].alpha = float16_t(type == FIT_RGBAF ? src_pixel[x].alpha : 1.0f).toBits();
-        }
-        src_bits += src_pitch;
-        dst_bits += dst_pitch;
-    }
-    return pNew;
-}
 Bitmap::UniqueConstPtr Bitmap::create(uint32_t width, uint32_t height, ResourceFormat format, const uint8_t* pData)
 {
     return Bitmap::UniqueConstPtr(new Bitmap(width, height, format, pData));
@@ -296,155 +155,147 @@ Bitmap::UniqueConstPtr Bitmap::createFromFile(const std::filesystem::path& path,
         return nullptr;
     }
 
-    FREE_IMAGE_FORMAT fifFormat = FIF_UNKNOWN;
-
-    fifFormat = FreeImage_GetFileType(path.string().c_str(), 0);
-    if (fifFormat == FIF_UNKNOWN)
+    auto input = OIIO::ImageInput::open(path.string());
+    if (!input)
     {
-        // Can't get the format from the file. Use file extension
-        fifFormat = FreeImage_GetFIFFromFilename(path.string().c_str());
-
-        if (fifFormat == FIF_UNKNOWN)
-        {
-            genWarning("Image type unknown", path);
-            return nullptr;
-        }
-    }
-
-    // Check the library supports loading this image type
-    if (FreeImage_FIFSupportsReading(fifFormat) == false)
-    {
-        genWarning("Library doesn't support the file format", path);
+        genWarning(OIIO::geterror(), path);
         return nullptr;
     }
 
-    // Read file using memory mapped access which is much faster than regular file IO.
-    MemoryMappedFile file(path, MemoryMappedFile::kWholeFile, MemoryMappedFile::AccessHint::SequentialScan);
-    if (!file.isOpen())
-    {
-        genWarning("Can't open image file {}", path);
-        return nullptr;
-    }
+    const OIIO::ImageSpec& spec = input->spec();
+    const uint32_t width = uint32_t(spec.width);
+    const uint32_t height = uint32_t(spec.height);
+    const uint32_t srcChannels = uint32_t(spec.nchannels);
 
-    if (fifFormat == FIF_EXR)
-    {
-        if (isFloat16Exr(file))
-            importFlags |= ImportFlags::ConvertToFloat16;
-    }
-
-    FIMEMORY* memory = FreeImage_OpenMemory((BYTE*)file.getData(), file.getSize());
-    FIBITMAP* pDib = FreeImage_LoadFromMemory(fifFormat, memory);
-    FreeImage_CloseMemory(memory);
-    file.close();
-
-    if (pDib == nullptr)
-    {
-        genWarning("Can't read image file", path);
-        return nullptr;
-    }
-
-    // Create the bitmap
-    const uint32_t height = FreeImage_GetHeight(pDib);
-    const uint32_t width = FreeImage_GetWidth(pDib);
-
-    if (height == 0 || width == 0 || FreeImage_GetBits(pDib) == nullptr)
+    if (width == 0 || height == 0 || srcChannels == 0)
     {
         genWarning("Invalid image", path);
         return nullptr;
     }
 
-    // Convert palettized images to RGBA.
-    FREE_IMAGE_COLOR_TYPE colorType = FreeImage_GetColorType(pDib);
-    if (colorType == FIC_PALETTE)
-    {
-        auto pNew = FreeImage_ConvertTo32Bits(pDib);
-        FreeImage_Unload(pDib);
-        pDib = pNew;
+    // Identify the resource format and the per-channel type we read from OpenImageIO.
+    // We always expand color images to 4 channels (RGBA) since RGB-only formats are not generally supported.
+    const OIIO::TypeDesc::BASETYPE baseType = OIIO::TypeDesc::BASETYPE(spec.format.basetype);
+    const bool isFloatType = (baseType == OIIO::TypeDesc::FLOAT || baseType == OIIO::TypeDesc::DOUBLE || baseType == OIIO::TypeDesc::HALF);
+    const bool is16BitInt = (baseType == OIIO::TypeDesc::UINT16 || baseType == OIIO::TypeDesc::INT16);
 
-        if (pDib == nullptr)
-        {
-            genWarning("Failed to convert palettized image to RGBA format", path);
-            return nullptr;
-        }
-
-        colorType = FreeImage_GetColorType(pDib);
-    }
-
-    // Identify resource format based on bit depth.
     ResourceFormat format = ResourceFormat::Unknown;
-    uint32_t bpp = FreeImage_GetBPP(pDib);
-    switch (bpp)
+    OIIO::TypeDesc readType;
+    uint32_t dstChannels = 4;
+
+    if (isFloatType)
     {
-    case 128:
-        format = ResourceFormat::RGBA32Float; // 4xfloat32 HDR format
-        break;
-    case 96:
-        format = isRGB32fSupported() ? ResourceFormat::RGB32Float : ResourceFormat::RGBA32Float; // 3xfloat32 HDR format
-        break;
-    case 64:
-        FALCOR_CHECK(colorType == FIC_RGBALPHA, "Only expect 16b RGBA with 64 bits per pixel");
-        format = ResourceFormat::RGBA16Unorm;
-        break;
-    case 48:
-    {
-        FALCOR_CHECK(colorType == FIC_RGB, "Only expect 16b RGB with 48 bits per pixel");
-        format = ResourceFormat::RGBA16Unorm;
-        auto pNew = FreeImage_ConvertToRGBA16(pDib);
-        FreeImage_Unload(pDib);
-        pDib = pNew;
-        bpp = FreeImage_GetBPP(pDib);
+        if (baseType == OIIO::TypeDesc::HALF || is_set(importFlags, ImportFlags::ConvertToFloat16))
+        {
+            format = ResourceFormat::RGBA16Float;
+            readType = OIIO::TypeDesc::HALF;
+        }
+        else
+        {
+            format = ResourceFormat::RGBA32Float;
+            readType = OIIO::TypeDesc::FLOAT;
+        }
+        dstChannels = 4;
     }
-    break;
-    case 32:
-        format = ResourceFormat::BGRA8Unorm;
-        break;
-    case 24:
-        format = ResourceFormat::BGRX8Unorm;
-        break;
-    case 16:
-        format = (FreeImage_GetImageType(pDib) == FIT_UINT16) ? ResourceFormat::R16Unorm : ResourceFormat::RG8Unorm;
-        break;
-    case 8:
-        format = ResourceFormat::R8Unorm;
-        break;
-    default:
-        genWarning("Unknown bits-per-pixel", path);
+    else if (is16BitInt)
+    {
+        readType = OIIO::TypeDesc::UINT16;
+        if (srcChannels == 1)
+        {
+            format = ResourceFormat::R16Unorm;
+            dstChannels = 1;
+        }
+        else
+        {
+            format = ResourceFormat::RGBA16Unorm;
+            dstChannels = 4;
+        }
+    }
+    else
+    {
+        readType = OIIO::TypeDesc::UINT8;
+        if (srcChannels == 1)
+        {
+            format = ResourceFormat::R8Unorm;
+            dstChannels = 1;
+        }
+        else if (srcChannels == 2)
+        {
+            format = ResourceFormat::RG8Unorm;
+            dstChannels = 2;
+        }
+        else
+        {
+            format = ResourceFormat::RGBA8Unorm;
+            dstChannels = 4;
+        }
+    }
+
+    // Read the native channels (converted to readType) into a temporary buffer.
+    const size_t elemSize = readType.size();
+    std::vector<uint8_t> src(size_t(width) * height * srcChannels * elemSize);
+    if (!input->read_image(0, 0, 0, srcChannels, readType, src.data()))
+    {
+        genWarning(input->geterror(), path);
         return nullptr;
     }
+    input->close();
 
-    // Convert the image to RGBX image
-    if (bpp == 24)
+    // Fill value for a synthesized alpha channel (opaque).
+    uint8_t alphaFill[sizeof(float)] = {};
+    switch (readType.basetype)
     {
-        bpp = 32;
-        auto pNew = FreeImage_ConvertTo32Bits(pDib);
-        FreeImage_Unload(pDib);
-        pDib = pNew;
+    case OIIO::TypeDesc::FLOAT:
+    {
+        const float one = 1.f;
+        std::memcpy(alphaFill, &one, sizeof(one));
+        break;
     }
-    else if ((bpp == 96 || bpp == 128) && is_set(importFlags, ImportFlags::ConvertToFloat16))
+    case OIIO::TypeDesc::HALF:
     {
-        bpp = 64;
-        format = ResourceFormat::RGBA16Float;
-        auto pNew = convertToRGBA16Float(pDib);
-        FreeImage_Unload(pDib);
-        pDib = pNew;
+        const uint16_t one = float16_t(1.f).toBits();
+        std::memcpy(alphaFill, &one, sizeof(one));
+        break;
     }
-    else if (bpp == 96 && (isRGB32fSupported() == false))
+    case OIIO::TypeDesc::UINT16:
     {
-        bpp = 128;
-        auto pNew = convertToRGBAF(pDib);
-        FreeImage_Unload(pDib);
-        pDib = pNew;
+        const uint16_t one = 0xffff;
+        std::memcpy(alphaFill, &one, sizeof(one));
+        break;
+    }
+    default: // UINT8
+        alphaFill[0] = 0xff;
+        break;
     }
 
-    // PFM images are loaded y-flipped, fix this by inverting the isTopDown flag.
-    if (fifFormat == FIF_PFM)
-        isTopDown = !isTopDown;
-
+    // OpenImageIO returns pixels top-down. Flip rows if the caller requested bottom-up layout.
     UniqueConstPtr pBmp = UniqueConstPtr(new Bitmap(width, height, format));
-    FreeImage_ConvertToRawBits(
-        pBmp->getData(), pDib, pBmp->getRowPitch(), bpp, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, isTopDown
-    );
-    FreeImage_Unload(pDib);
+    uint8_t* dst = pBmp->getData();
+    const size_t srcRowSize = size_t(width) * srcChannels * elemSize;
+    const size_t dstRowSize = size_t(width) * dstChannels * elemSize;
+
+    for (uint32_t y = 0; y < height; ++y)
+    {
+        const uint8_t* srcRow = src.data() + size_t(y) * srcRowSize;
+        uint8_t* dstRow = dst + size_t(isTopDown ? y : (height - 1 - y)) * dstRowSize;
+
+        for (uint32_t x = 0; x < width; ++x)
+        {
+            const uint8_t* srcPixel = srcRow + size_t(x) * srcChannels * elemSize;
+            uint8_t* dstPixel = dstRow + size_t(x) * dstChannels * elemSize;
+
+            for (uint32_t c = 0; c < dstChannels; ++c)
+            {
+                if (c < srcChannels)
+                    std::memcpy(dstPixel + c * elemSize, srcPixel + c * elemSize, elemSize);
+                else if (c == dstChannels - 1)
+                    std::memcpy(dstPixel + c * elemSize, alphaFill, elemSize);
+                else
+                    std::memset(dstPixel + c * elemSize, 0, elemSize);
+            }
+        }
+    }
+
     return pBmp;
 }
 
@@ -468,44 +319,6 @@ Bitmap::Bitmap(uint32_t width, uint32_t height, ResourceFormat format)
 Bitmap::Bitmap(uint32_t width, uint32_t height, ResourceFormat format, const uint8_t* pData) : Bitmap(width, height, format)
 {
     std::memcpy(mpData.get(), pData, mSize);
-}
-
-static FREE_IMAGE_FORMAT toFreeImageFormat(Bitmap::FileFormat fmt)
-{
-    switch (fmt)
-    {
-    case Bitmap::FileFormat::PngFile:
-        return FIF_PNG;
-    case Bitmap::FileFormat::JpegFile:
-        return FIF_JPEG;
-    case Bitmap::FileFormat::TgaFile:
-        return FIF_TARGA;
-    case Bitmap::FileFormat::BmpFile:
-        return FIF_BMP;
-    case Bitmap::FileFormat::PfmFile:
-        return FIF_PFM;
-    case Bitmap::FileFormat::ExrFile:
-        return FIF_EXR;
-    default:
-        FALCOR_UNREACHABLE();
-    }
-    return FIF_PNG;
-}
-
-static FREE_IMAGE_TYPE getImageType(uint32_t bytesPerPixel)
-{
-    switch (bytesPerPixel)
-    {
-    case 4:
-        return FIT_BITMAP;
-    case 12:
-        return FIT_RGBF;
-    case 16:
-        return FIT_RGBAF;
-    default:
-        FALCOR_UNREACHABLE();
-    }
-    return FIT_BITMAP;
 }
 
 Bitmap::FileFormat Bitmap::getFormatFromFileExtension(const std::string& ext)
@@ -587,6 +400,12 @@ void Bitmap::saveImageDialog(Texture* pTexture)
     }
 }
 
+static bool isBGRFormat(ResourceFormat format)
+{
+    return format == ResourceFormat::BGRA8Unorm || format == ResourceFormat::BGRA8UnormSrgb ||
+           format == ResourceFormat::BGRX8Unorm || format == ResourceFormat::BGRX8UnormSrgb;
+}
+
 void Bitmap::saveImage(
     const std::filesystem::path& path,
     uint32_t width,
@@ -606,172 +425,145 @@ void Bitmap::saveImage(
         (!is_set(exportFlags, ExportFlags::Uncompressed) || fileFormat != FileFormat::ExrFile))
         FALCOR_THROW("Incompatible flags: EXR float16 can only be set for uncompressed EXR files.");
 
-    int flags = 0;
-    FIBITMAP* pImage = nullptr;
-    uint32_t bytesPerPixel = getFormatBytesPerBlock(resourceFormat);
+    const bool exportAlpha = is_set(exportFlags, ExportFlags::ExportAlpha);
+    const bool isHdr = (fileFormat == FileFormat::PfmFile || fileFormat == FileFormat::ExrFile);
 
-    // Convert 8-bit RGBA to BGRA byte order.
-    // TODO: Replace this code for swapping channels. Can't use FreeImage masks b/c they only care about 16 bpp images.
-    if (resourceFormat == ResourceFormat::RGBA8Unorm || resourceFormat == ResourceFormat::RGBA8Snorm ||
-        resourceFormat == ResourceFormat::RGBA8UnormSrgb)
-    {
-        for (uint32_t a = 0; a < width * height; a++)
-        {
-            uint32_t* pPixel = (uint32_t*)pData;
-            pPixel += a;
-            uint8_t* ch = (uint8_t*)pPixel;
-            std::swap(ch[0], ch[2]);
-            if (is_set(exportFlags, ExportFlags::ExportAlpha) == false)
-            {
-                ch[3] = 0xff;
-            }
-        }
-    }
+    OIIO::TypeDesc sourceType; // Type of the data we hand to OpenImageIO.
+    OIIO::TypeDesc fileType;   // Per-channel type stored in the file.
+    uint32_t srcChannels = 0;  // Channels present in the source buffer (stride between pixels).
+    uint32_t outChannels = 0;  // Channels written to the file.
 
-    if (fileFormat == Bitmap::FileFormat::PfmFile || fileFormat == Bitmap::FileFormat::ExrFile)
+    // Source pointer (may be redirected to a converted/swizzled scratch buffer below).
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(pData);
+    std::vector<float> floatScratch;
+    std::vector<uint8_t> byteScratch;
+    std::vector<std::string> warnings;
+
+    OIIO::ImageSpec spec;
+
+    if (isHdr)
     {
-        std::vector<float> floatData;
+        sourceType = OIIO::TypeDesc::FLOAT;
+
         if (isConvertibleToRGBA32Float(resourceFormat))
         {
-            floatData = convertToRGBA32Float(resourceFormat, width, height, pData);
-            pData = floatData.data();
-            resourceFormat = ResourceFormat::RGBA32Float;
-            bytesPerPixel = 16;
+            floatScratch = convertToRGBA32Float(resourceFormat, width, height, pData);
+            src = reinterpret_cast<const uint8_t*>(floatScratch.data());
+            srcChannels = 4;
         }
-        else if (bytesPerPixel != 16 && bytesPerPixel != 12)
+        else if (getFormatType(resourceFormat) == FormatType::Float && getNumChannelBits(resourceFormat, 0) == 32)
         {
-            FALCOR_THROW("Only support for 32-bit/channel RGB/RGBA or 16-bit RGBA images as PFM/EXR files.");
+            srcChannels = getFormatChannelCount(resourceFormat);
+        }
+        else
+        {
+            FALCOR_THROW("Only support for floating-point or convertible formats as PFM/EXR files.");
         }
 
-        const bool exportAlpha = is_set(exportFlags, ExportFlags::ExportAlpha);
-
-        if (fileFormat == Bitmap::FileFormat::PfmFile)
+        if (fileFormat == FileFormat::PfmFile)
         {
             FALCOR_CHECK(!is_set(exportFlags, ExportFlags::Lossy), "PFM does not support lossy compression mode.");
             FALCOR_CHECK(!exportAlpha, "PFM does not support alpha channel.");
+            outChannels = std::min(srcChannels, 3u);
+            fileType = OIIO::TypeDesc::FLOAT;
+        }
+        else // ExrFile
+        {
+            // Write all available channels, dropping alpha from RGBA sources unless explicitly requested.
+            outChannels = (exportAlpha && srcChannels == 4) ? 4 : std::min(srcChannels, 3u);
+            fileType = is_set(exportFlags, ExportFlags::ExrFloat16) ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
         }
 
-        if (exportAlpha && bytesPerPixel != 16)
-            FALCOR_THROW("Requesting to export alpha-channel to EXR file, but the resource doesn't have an alpha-channel");
+        spec = OIIO::ImageSpec(int(width), int(height), int(outChannels), fileType);
 
-        // Upload the image manually and flip it vertically
-        bool scanlineCopy = exportAlpha ? bytesPerPixel == 16 : bytesPerPixel == 12;
-
-        pImage = FreeImage_AllocateT(exportAlpha ? FIT_RGBAF : FIT_RGBF, width, height);
-        BYTE* head = (BYTE*)pData;
-        for (unsigned y = 0; y < height; y++)
+        if (fileFormat == FileFormat::ExrFile)
         {
-            float* dstBits = (float*)FreeImage_GetScanLine(pImage, height - y - 1);
-            if (scanlineCopy)
-            {
-                std::memcpy(dstBits, head, bytesPerPixel * width);
-            }
-            else
-            {
-                FALCOR_ASSERT(exportAlpha == false);
-                for (unsigned x = 0; x < width; x++)
-                {
-                    dstBits[x * 3 + 0] = (((float*)head)[x * 4 + 0]);
-                    dstBits[x * 3 + 1] = (((float*)head)[x * 4 + 1]);
-                    dstBits[x * 3 + 2] = (((float*)head)[x * 4 + 2]);
-                }
-            }
-            head += bytesPerPixel * width;
-        }
-
-        if (fileFormat == Bitmap::FileFormat::ExrFile)
-        {
-            flags = 0;
             if (is_set(exportFlags, ExportFlags::Uncompressed))
-            {
-                flags |= EXR_NONE;
-                if (!is_set(exportFlags, ExportFlags::ExrFloat16))
-                    flags |= EXR_FLOAT;
-            }
+                spec.attribute("compression", "none");
             else if (is_set(exportFlags, ExportFlags::Lossy))
-            {
-                flags |= EXR_B44 | EXR_ZIP;
-            }
+                spec.attribute("compression", "b44");
+            else
+                spec.attribute("compression", "zip");
         }
     }
     else
     {
-        FIBITMAP* pTemp = FreeImage_ConvertFromRawBits(
-            (BYTE*)pData,
-            width,
-            height,
-            bytesPerPixel * width,
-            bytesPerPixel * 8,
-            FI_RGBA_RED_MASK,
-            FI_RGBA_GREEN_MASK,
-            FI_RGBA_BLUE_MASK,
-            isTopDown
-        );
-        if (is_set(exportFlags, ExportFlags::ExportAlpha) == false || fileFormat == Bitmap::FileFormat::JpegFile)
+        sourceType = OIIO::TypeDesc::UINT8;
+        fileType = OIIO::TypeDesc::UINT8;
+        srcChannels = getFormatChannelCount(resourceFormat);
+
+        // OpenImageIO writes channels in RGBA order. Swizzle BGRA/BGRX sources to RGBA.
+        if (isBGRFormat(resourceFormat) && srcChannels == 4)
         {
-            pImage = FreeImage_ConvertTo24Bits(pTemp);
-            FreeImage_Unload(pTemp);
-        }
-        else
-        {
-            pImage = pTemp;
+            byteScratch.assign(reinterpret_cast<const uint8_t*>(pData),
+                               reinterpret_cast<const uint8_t*>(pData) + size_t(width) * height * 4);
+            for (size_t i = 0; i < size_t(width) * height; ++i)
+                std::swap(byteScratch[i * 4 + 0], byteScratch[i * 4 + 2]);
+            src = byteScratch.data();
         }
 
-        std::vector<std::string> warnings;
+        const bool fmtSupportsAlpha = (fileFormat == FileFormat::PngFile || fileFormat == FileFormat::TgaFile);
+        outChannels = (exportAlpha && srcChannels == 4 && fmtSupportsAlpha) ? 4 : std::min(srcChannels, 3u);
+
+        spec = OIIO::ImageSpec(int(width), int(height), int(outChannels), fileType);
+
         switch (fileFormat)
         {
         case FileFormat::JpegFile:
-            if (is_set(exportFlags, ExportFlags::Lossy) == false || is_set(exportFlags, ExportFlags::Uncompressed))
-            {
-                flags = JPEG_QUALITYSUPERB | JPEG_SUBSAMPLING_444;
-            }
-            if (is_set(exportFlags, ExportFlags::ExportAlpha))
-            {
+            spec.attribute("CompressionQuality", is_set(exportFlags, ExportFlags::Lossy) ? 90 : 100);
+            spec.attribute("jpeg:subsampling", "4:4:4");
+            if (exportAlpha)
                 warnings.push_back("JPEG format does not support alpha channel.");
-            }
             break;
-
-        // Lossless formats
         case FileFormat::PngFile:
-            flags = is_set(exportFlags, ExportFlags::Uncompressed) ? PNG_Z_NO_COMPRESSION : PNG_Z_BEST_COMPRESSION;
-
+            spec.attribute("png:compressionLevel", is_set(exportFlags, ExportFlags::Uncompressed) ? 0 : 9);
             if (is_set(exportFlags, ExportFlags::Lossy))
-            {
                 warnings.push_back("PNG format does not support lossy compression mode.");
-            }
             break;
-
         case FileFormat::TgaFile:
+            spec.attribute("compression", "none");
             if (is_set(exportFlags, ExportFlags::Lossy))
-            {
                 warnings.push_back("TGA format does not support lossy compression mode.");
-            }
             break;
-
         case FileFormat::BmpFile:
+            spec.attribute("compression", "none");
             if (is_set(exportFlags, ExportFlags::Lossy))
-            {
                 warnings.push_back("BMP format does not support lossy compression mode.");
-            }
-            if (is_set(exportFlags, ExportFlags::ExportAlpha))
-            {
+            if (exportAlpha)
                 warnings.push_back("BMP format does not support alpha channel.");
-            }
             break;
-
         default:
             FALCOR_UNREACHABLE();
         }
-
-        if (warnings.empty() == false)
-        {
-            logWarning("Bitmap::saveImage: {}", joinStrings(warnings, " "));
-        }
     }
 
-    if (!FreeImage_Save(toFreeImageFormat(fileFormat), pImage, path.string().c_str(), flags))
-        FALCOR_THROW("FreeImage failed to save image");
+    if (!warnings.empty())
+        logWarning("Bitmap::saveImage: {}", joinStrings(warnings, " "));
 
-    FreeImage_Unload(pImage);
+    auto output = OIIO::ImageOutput::create(path.string());
+    if (!output)
+        FALCOR_THROW("Failed to create image writer for '{}': {}", path, OIIO::geterror());
+
+    if (!output->open(path.string(), spec))
+        FALCOR_THROW("Failed to open '{}' for writing: {}", path, output->geterror());
+
+    // Stride between pixels in the source buffer (keeps extra channels that are not written).
+    const OIIO::stride_t xstride = OIIO::stride_t(srcChannels) * sourceType.size();
+    OIIO::stride_t ystride = xstride * width;
+    const uint8_t* base = src;
+    if (!isTopDown)
+    {
+        base += size_t(ystride) * (height - 1);
+        ystride = -ystride;
+    }
+
+    if (!output->write_image(sourceType, base, xstride, ystride))
+    {
+        const std::string error = output->geterror();
+        output->close();
+        FALCOR_THROW("Failed to write image '{}': {}", path, error);
+    }
+
+    output->close();
 }
 } // namespace Falcor
