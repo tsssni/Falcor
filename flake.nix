@@ -72,7 +72,12 @@
               shader-slang
               ty
               vulkan-validation-layers
-              (python3.withPackages (ps: with ps; [ tqdm ]))
+              (python3.withPackages (
+                ps: with ps; [
+                  tqdm
+                  openimageio
+                ]
+              ))
             ];
             shellHook = ''
               for nvtt_so in external/nvtt/libnvtt.so.*; do
